@@ -351,6 +351,16 @@ class UPE(BaseAlgorithm):
         if self.hparams.grad_strategy == 'sgd':
             self.optimizer_func = torch.optim.SGD
 
+        pretrain_params = list(self.propensity_model.document_feature_layer.parameters()) + \
+                          list(self.propensity_model.trm_encoder.parameters()) + \
+                          list(self.propensity_model.output_layer.parameters())
+        denoise_params = list(self.propensity_model.position_embedding.parameters())
+        ranking_model_params = list(self.model.parameters())
+
+        self.opt_pretrain = self.optimizer_func(pretrain_params, self.pretrain_learning_rate, weight_decay=1e-4)
+        self.opt_denoise = self.optimizer_func(denoise_params, self.propensity_learning_rate)
+        self.opt_ranker = self.optimizer_func(ranking_model_params, self.learning_rate)
+
         print('Loss Function is ' + self.hparams.loss_func)
         # Select loss function
         self.loss_func = None
@@ -362,11 +372,9 @@ class UPE(BaseAlgorithm):
             self.loss_func = self.softmax_loss
 
     def separate_gradient_update(self):
-        pretrain_params = list(self.propensity_model.document_feature_layer.parameters()) + \
-                          list(self.propensity_model.trm_encoder.parameters()) + \
-                          list(self.propensity_model.output_layer.parameters())
-        denoise_params = list(self.propensity_model.position_embedding.parameters())
-        ranking_model_params = list(self.model.parameters())
+        denoise_params = self.propensity_model.parameters()
+        ranking_model_params = self.model.parameters()
+
         # Select optimizer
         if self.hparams.l2_loss > 0:
             # for p in denoise_params:
@@ -377,13 +385,9 @@ class UPE(BaseAlgorithm):
         self.loss = self.exam_loss + self.hparams.ranker_loss_weight * self.rank_loss + \
                     self.hparams.ranker_loss_weight * self.pretrain_loss
 
-        opt_pretrain = self.optimizer_func(pretrain_params, self.pretrain_learning_rate)
-        opt_denoise = self.optimizer_func(denoise_params, self.propensity_learning_rate)
-        opt_ranker = self.optimizer_func(ranking_model_params, self.learning_rate)
-
-        opt_pretrain.zero_grad()
-        opt_denoise.zero_grad()
-        opt_ranker.zero_grad()
+        self.opt_pretrain.zero_grad()
+        self.opt_denoise.zero_grad()
+        self.opt_ranker.zero_grad()
 
         self.loss.backward()
 
@@ -391,9 +395,9 @@ class UPE(BaseAlgorithm):
             nn.utils.clip_grad_norm_(self.propensity_model.parameters(), self.hparams.max_gradient_norm)
             nn.utils.clip_grad_norm_(self.model.parameters(), self.hparams.max_gradient_norm)
 
-        opt_pretrain.step()
-        opt_denoise.step()
-        opt_ranker.step()
+        self.opt_pretrain.step()
+        self.opt_denoise.step()
+        self.opt_ranker.step()
 
         total_norm = 0
 
