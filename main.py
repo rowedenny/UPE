@@ -202,7 +202,7 @@ def train(exp_settings):
 
             if args.test_while_train:
                 test_summary = validate_model(test_set, test_input_feed)
-                test_writer.add_scalars('Test Summary while training', test_summary, model.global_step)
+                test_writer.add_scalars('TestSummaryWhileTraining', test_summary, model.global_step)
                 for key, value in test_summary.items():
                     print(key, value)
 
