@@ -5,6 +5,7 @@ from .click_simulation_feed import *
 from .direct_label_feed import *
 from .deterministic_online_simulation_feed import *
 from .stochastic_online_simulation_feed import *
+from .periodical_deterministic_online_simulation_feed import *
 
 def list_available():
     from .base_input_feed import BaseInputFeed

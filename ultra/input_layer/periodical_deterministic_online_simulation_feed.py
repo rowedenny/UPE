@@ -10,6 +10,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import copy
 import random
 import time
 import json
@@ -21,8 +22,9 @@ import ultra.utils
 
 
 
-class DeterministicOnlineSimulationFeed(BaseInputFeed):
+class PeriodicalDeterministicOnlineSimulationFeed(BaseInputFeed):
     """Simulate online learning to rank and click data based on human annotations.
+       The logging policy update periodically, which generates rerank score for candidate documents
 
     This class implements a input layer for online learning to rank experiments
     by simulating click data based on both the human relevance annotation of
@@ -49,9 +51,10 @@ class DeterministicOnlineSimulationFeed(BaseInputFeed):
             # Set how many steps to change eta for dynamic bias severity in
             # training, 0.0 means no change.
             dynamic_bias_step_interval=1000,
+            periodical_logging_polocy_step_interval=2500
         )
 
-        print('Create online deterministic simluation feed')
+        print('Create periodical online deterministic simluation feed')
         print(hparam_str)
         self.hparams.parse(hparam_str)
         self.click_model = None
@@ -67,6 +70,7 @@ class DeterministicOnlineSimulationFeed(BaseInputFeed):
         self.batch_size = batch_size
         self.model = model
         self.global_batch_count = 0
+        self.periodical_logging_policy = None
 
         # Check whether the model needs result interleaving.
         self.need_interleave = False
@@ -117,7 +121,8 @@ class DeterministicOnlineSimulationFeed(BaseInputFeed):
 
         """
         # Compute ranking scores with input_feed
-        rank_scores = self.model.validation(input_feed, True)[1]
+        rank_scores = self.model.logging_policy_validation(input_feed, self.periodical_logging_policy)
+
         # Rerank documents and collect clicks
         letor_features_length = len(input_feed[self.model.letor_features_name])
         local_batch_size = len(input_feed[self.model.docid_inputs_name[0]])
@@ -167,9 +172,8 @@ class DeterministicOnlineSimulationFeed(BaseInputFeed):
                     input_feed[self.model.labels_name[j]][i] = click_list[j]
                 else:
                     input_feed[self.model.labels_name[j]][i] = 0
-
                 if self.need_policy_score:
-                    input_feed[self.model.initial_scores_name[j]] = new_score_list[j]
+                    input_feed[self.model.initial_scores_name[j]][i] = new_score_list[j]
 
         return input_feed
 
@@ -189,6 +193,9 @@ class DeterministicOnlineSimulationFeed(BaseInputFeed):
             info_map: a dictionary contain some basic information about the batch (for debugging).
 
         """
+        if self.global_batch_count % self.hparams.periodical_logging_polocy_step_interval == 0:
+            self.periodical_logging_policy = copy.deepcopy(self.model.model)
+            print(" !! Restore logging policy at step %d" % self.global_batch_count)
 
         if len(data_set.initial_list[0]) < self.rank_list_size:
             raise ValueError("Input ranklist length must be no less than the required list size,"
