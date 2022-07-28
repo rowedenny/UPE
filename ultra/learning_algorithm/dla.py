@@ -79,7 +79,7 @@ class DLA(BaseAlgorithm):
             ranker_loss_weight=1.0,            # Set the weight of unbiased ranking loss
             # Set strength for L2 regularization.
             l2_loss=0.0,
-            max_propensity_weight=-1,      # Set maximum value for propensity weights
+            max_propensity_weight=1e+3,      # Set maximum value for propensity weights
             constant_propensity_initialization=False,
             # Set true to initialize propensity with constants.
             grad_strategy='ada',            # Select gradient strategy

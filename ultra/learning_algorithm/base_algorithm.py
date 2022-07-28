@@ -225,6 +225,13 @@ class BaseAlgorithm(ABC):
                 params, self.hparams.max_gradient_norm)
         opt.step()
 
+    def logging_policy_validation(self, input_feed, logging_policy):
+        logging_policy.eval()
+        self.create_input_feed(input_feed, self.max_candidate_num)
+        with torch.no_grad():
+            scores = self.ranking_model(logging_policy, self.max_candidate_num)
+        return scores
+
     def pairwise_cross_entropy_loss(
             self, pos_scores, neg_scores, propensity_weights=None):
         """Computes pairwise softmax loss without propensity weighting.

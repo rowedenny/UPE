@@ -294,7 +294,7 @@ class UPE(BaseAlgorithm):
             pretrain_learning_rate=5e-3,    # The learning rate for propensity model pretrain
             ranker_loss_weight=1.0,         # Set the weight of unbiased ranking loss
             l2_loss=0.0,                    # Set strength for L2 regularization.
-            max_propensity_weight=-1,       # Set maximum value for propensity weights
+            max_propensity_weight=1e+3,     # Set maximum value for propensity weights
             constant_propensity_initialization=False,
             grad_strategy='ada',            # Select gradient strategy for model
             need_policy_score=True,
