@@ -1,6 +1,9 @@
-### This is the implementation of Unconfounded Propensity Estimation for unbiased learning to rank.
+### This is the implementation of Unconfounded Propensity Estimation for Unbiased Ranking.
 
 Our implementation is based on [ULTRA](https://github.com/ULTR-Community/ULTRA_pytorch)
+
+The implementation of UPE can be found under ultra/learning_algorithm/upe_rank.py,
+its config file can be found under offline_setting(online_setting)/upe_exp_setting.json
 
 ### How to Run
 
