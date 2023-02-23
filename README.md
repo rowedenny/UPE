@@ -17,7 +17,7 @@ python main.py --setting_file=./example/offline_setting/upe_rank_settings.json \
                --output_dir=./tests/pbm_optimal/Yahoo/
 ```
 
-**2. Experiments with online learning setting -- periodical deterministic online simulation**
+**2. Experiments with dynmaic learning setting -- periodical deterministic online simulation**
 ```
 python main.py \
   --data_dir=./Yahoo_letor/tmp_data/ \
