@@ -19,180 +19,6 @@ def sigmoid_prob(logits):
     return torch.sigmoid(logits - torch.mean(logits, -1, keepdim=True))
 
 
-""" The code for transformer part borrow a lot from 
-    https://github.com/RUCAIBox/RecBole/blob/master/recbole/model/layers.py
-"""
-
-class MultiHeadAttention(nn.Module):
-    """ Multi-head Self-attention layers, a attention score dropout layer is introduced.
-    """
-    def __init__(self, n_heads, hidden_size, hidden_dropout_prob, attn_dropout_prob, layer_norm_eps):
-        super(MultiHeadAttention, self).__init__()
-
-        assert hidden_size % n_heads == 0
-
-        self.num_attention_heads = n_heads
-        self.attention_head_size = int(hidden_size / n_heads)
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
-        self.sqrt_attention_head_size = math.sqrt(self.attention_head_size)
-
-        self.query = nn.Linear(hidden_size, self.all_head_size)
-        self.key   = nn.Linear(hidden_size, self.all_head_size)
-        self.value = nn.Linear(hidden_size, self.all_head_size)
-
-        self.softmax = nn.Softmax(dim=-1)
-        self.dense = nn.Linear(hidden_size, hidden_size)
-        self.LayerNorm = nn.LayerNorm(hidden_size, eps=layer_norm_eps)
-        self.attn_dropout = nn.Dropout(attn_dropout_prob)
-        self.out_dropout = nn.Dropout(hidden_dropout_prob)
-
-    def transpose_for_scores(self, x):
-        """
-        :param x: [batch_size, rank_list_size, all_head_size]
-        :return: [batch_size, rank_list_size, num_attention_heads, attention_head_size]
-        """
-        new_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
-        x = x.view(*new_shape)
-        return x
-
-    def forward(self, input_tensor, attention_mask):
-        """
-        :param input_tensor: [batch_size, rank_list_size, hidden_size]
-        :param attention_mask: None, the attention mask for input tensor
-        :return:
-        """
-        # [batch_size, rank_list_size, all_head_size]
-        mixed_query_layer = self.query(input_tensor)
-        mixed_key_layer   = self.key(input_tensor)
-        mixed_value_layer = self.value(input_tensor)
-
-        # [batch_size, rank_list_size, num_attention_heads, attention_head_size]
-        # --> [batch_size, num_attention_heads, rank_list_size, attention_head_size]
-        query_layer = self.transpose_for_scores(mixed_query_layer).permute(0, 2, 1, 3)
-        key_layer   = self.transpose_for_scores(mixed_key_layer).permute(0, 2, 1, 3)
-        value_layer = self.transpose_for_scores(mixed_value_layer).permute(0, 2, 1, 3)
-
-        # Take the dot product between "query" and "key" to get the raw attention scores.
-        # [batch_size, num_attention_heads, rank_list_size, rank_list_size]
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(2, 3))
-        attention_scores = attention_scores / self.sqrt_attention_head_size
-
-        attention_probs = self.softmax(attention_scores)
-        attention_probs = self.attn_dropout(attention_probs)
-        # [batch_size, num_attention_heads, rank_list_size, attention_head_size]
-        context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size, )
-        # [batch_size, rank_list_size, hidden_size]
-        context_layer = context_layer.view(*new_context_layer_shape)
-        hidden_states = self.dense(context_layer)
-        hidden_states = self.out_dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
-
-        # [batch_size, rank_list_size, hidden_size]
-        return hidden_states
-
-
-class FeedForward(nn.Module):
-    """ Pointwise feed-forward layer by two dense layers
-    """
-    def __init__(self, hidden_size, inner_size, hidden_dropout_prob, hidden_act, layer_norm_eps):
-        super(FeedForward, self).__init__()
-        self.dense1 = nn.Linear(hidden_size, inner_size)
-        self.intermediate_activation = self.get_hidden_act(hidden_act)
-        self.dense2 = nn.Linear(inner_size, hidden_size)
-        self.LayerNorm = nn.LayerNorm(hidden_size, eps=layer_norm_eps)
-        self.dropout = nn.Dropout(hidden_dropout_prob)
-
-    def get_hidden_act(self, act):
-        ACT2FN = {
-            "gelu": self.gelu,
-            "relu": F.relu,
-            "swish": self.swish,
-            "tanh": torch.tanh,
-            "sigmoid": torch.sigmoid,
-            "leaky_relu": F.leaky_relu,
-        }
-        return ACT2FN[act]
-
-    def gelu(self, x):
-        """Implementation of the gelu activation function.
-        For information: OpenAI GPT's gelu is slightly different (and gives slightly different results)::
-            0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
-        Also see https://arxiv.org/abs/1606.08415
-        """
-        return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
-
-    def swish(self, x):
-        return x * torch.sigmoid(x)
-
-    def forward(self, input_tensor):
-        hidden_states = self.dense1(input_tensor)
-        hidden_states = self.intermediate_activation(hidden_states)
-
-        hidden_states = self.dense2(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
-
-        return hidden_states
-
-
-class TransformerLayer(nn.Module):
-    """ One transformer layer consists of a multi-head self-attention layer and a point-wise feed-forward layer.
-    """
-    def __init__(self, n_heads, hidden_size, intermediate_size, hidden_dropout_prob, attn_dropout_prob,
-                 hidden_act, layer_norm_eps):
-        super(TransformerLayer, self).__init__()
-        self.multi_head_attention = MultiHeadAttention(
-            n_heads, hidden_size, hidden_dropout_prob, attn_dropout_prob, layer_norm_eps)
-        self.feed_forward = FeedForward(hidden_size, intermediate_size, hidden_dropout_prob, hidden_act, layer_norm_eps)
-
-    def forward(self, hidden_states, attention_mask):
-        attention_output = self.multi_head_attention(hidden_states, attention_mask)
-        feedforward_output = self.feed_forward(attention_output)
-        return feedforward_output
-
-
-class TransformerEncoder(nn.Module):
-    """ One TransformerEncoder consists of n_layers of TransformerLayers.
-    """
-    def __init__(self,
-                 n_layers=2,
-                 n_heads=8,
-                 hidden_size=64,
-                 inner_size=256,
-                 hidden_dropout_prob=0.5,
-                 attn_dropout_prob=0.5,
-                 hidden_act='gelu',
-                 layer_norm_eps=1e-12
-        ):
-        super(TransformerEncoder, self).__init__()
-        layer = TransformerLayer(
-            n_heads, hidden_size, inner_size, hidden_dropout_prob, attn_dropout_prob, hidden_act, layer_norm_eps
-        )
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(n_layers)])
-
-    def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
-        """
-        Args:
-            hidden_states (torch.Tensor): the input of the TransformerEncoder
-            attention_mask (torch.Tensor): the attention mask for the input hidden_states
-            output_all_encoded_layers (Bool): whether output all transformer layers' output
-        Returns:
-            all_encoder_layers (list): if output_all_encoded_layers is True, return a list consists of all transformer
-            layers' output, otherwise return a list only consists of the output of last transformer layer.
-        """
-        all_encoder_layers = []
-        for layer_module in self.layer:
-            hidden_states = layer_module(hidden_states, attention_mask)
-            if output_all_encoded_layers:
-                all_encoder_layers.append(hidden_states)
-        if not output_all_encoded_layers:
-            all_encoder_layers.append(hidden_states)
-        return all_encoder_layers
-
-
 class PropensityModel(nn.Module):
     """ Propensity model adapts from SetRank, which take both position and document into account
     """
@@ -221,16 +47,7 @@ class PropensityModel(nn.Module):
             nn.Linear(self.hparams.inner_size, self.hparams.hidden_size)
         )
 
-        self.trm_encoder = TransformerEncoder(
-            n_layers=self.hparams.n_layers,
-            n_heads=self.hparams.n_heads,
-            hidden_size=self.hparams.hidden_size,
-            inner_size=self.hparams.inner_size,
-            hidden_dropout_prob=self.hparams.hidden_dropout_prob,
-            attn_dropout_prob=self.hparams.attn_dropout_prob,
-            hidden_act=self.hparams.hidden_act,
-            layer_norm_eps=self.hparams.layer_norm_eps
-        )
+        self.confounder_encoder = nn.Linear(self.hparams.hidden_size, self.hparams.hidden_size)
 
         self.output_layer = nn.Sequential(
             nn.Linear(self.hparams.hidden_size, self.hparams.inner_size),
@@ -238,7 +55,7 @@ class PropensityModel(nn.Module):
             nn.Linear(self.hparams.inner_size, 1),
         )
 
-    def forward(self, document_tensor, attention_mask, add_position):
+    def forward(self, document_tensor, add_position):
         """
         :param document_tensor: [batch_size, seq_len, feature_size]
         :param add_position: bool, True then add position_emb when generate output, False not.
@@ -246,8 +63,8 @@ class PropensityModel(nn.Module):
         """
         # [batch_size, rank_list_size, hidden_size]
         document_emb = self.document_feature_layer(document_tensor)
-        trm_output = self.trm_encoder(document_emb, attention_mask)
-        output = trm_output[-1]
+        output = self.confounder_encoder(document_emb)
+
 
         if add_position:
             position_ids = torch.arange(document_tensor.size(1), dtype=torch.long, device=document_tensor.device)
@@ -268,7 +85,7 @@ class PropensityModel(nn.Module):
         x = [torch.unsqueeze(e, 1) for e in input_list]
         x = torch.cat(x, dim=1).to(dtype=torch.float32, device=device)
         # [batch_size, rank_list_size, 1]
-        output = self.forward(x, attention_mask, add_position)
+        output = self.forward(x, add_position)
 
         return torch.unbind(output, 1)
 
@@ -352,7 +169,7 @@ class UPE(BaseAlgorithm):
             self.optimizer_func = torch.optim.SGD
 
         pretrain_params = list(self.propensity_model.document_feature_layer.parameters()) + \
-                          list(self.propensity_model.trm_encoder.parameters()) + \
+                          list(self.propensity_model.confounder_encoder.parameters()) + \
                           list(self.propensity_model.output_layer.parameters())
         denoise_params = list(self.propensity_model.position_embedding.parameters())
         ranking_model_params = list(self.model.parameters())
@@ -550,4 +367,3 @@ class UPE(BaseAlgorithm):
         clip_value_max = float(clip_value_max)
         for p in filter(lambda p: p.grad is not None, parameters):
             p.grad.data.clamp_(min=clip_value_min, max=clip_value_max)
-
